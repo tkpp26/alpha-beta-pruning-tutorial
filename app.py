@@ -384,3 +384,5 @@ st.info(
     "Tip: Switch to **Alpha–Beta pruning** and step through again to see where branches are cut off "
     "when α ≥ β, while the final root value stays the same as plain Minimax."
 )
+with open("Alpha-Beta Pruning - v2.pptx", "rb") as f:
+    st.download_button("Download Alpha-Beta Pruning Guidance", f, file_name="Alpha-Beta Pruning - v2.pptx")

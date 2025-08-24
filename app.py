@@ -424,6 +424,7 @@ with tab_tree:
     with c4:
         st.write(f"Step {st.session_state.i+1} / {len(st.session_state.steps)}")
 
+<<<<<<< HEAD
     draw_tree(
         st.session_state.nodes, step,
         show_alpha_beta=(algo.startswith("Alpha") and show_ab),
@@ -503,3 +504,11 @@ with tab_ttt:
         best_val, best_move = ttt_minimax(board.copy(), "X")
         if best_move is not None:
             st.caption(f"Hint (for X): try cell {best_move+1} (expected value {best_val}).")
+=======
+st.info(
+    "Tip: Switch to **Alpha–Beta pruning** and step through again to see where branches are cut off "
+    "when α ≥ β, while the final root value stays the same as plain Minimax."
+)
+with open("Alpha-Beta Pruning - v2.pptx", "rb") as f:
+    st.download_button("Download Alpha-Beta Pruning Guidance", f, file_name="Alpha-Beta Pruning - v2.pptx")
+>>>>>>> 0ad617e8aa0cf6b99287349e3b1949a2c52f0a85

@@ -152,6 +152,15 @@ def alphabeta_steps(nodes: Dict[str, Node]) -> List[Step]:
 # =========================
 # Diagram helpers
 # =========================
+def _is_trivial_tree(nodes: Dict[str, Node]) -> bool:
+    """True if there is only a root leaf or there are no edges to draw."""
+    if not nodes:
+        return True
+    root = nodes.get("ROOT")
+    if root is None:
+        return False
+    return (root.kind == "LEAF") and (not root.children)
+
 def hierarchy_pos(G, root, width=2.8, vert_gap=0.28, vert_loc=1.0, xcenter=0.0, sibling_sep=0.0):
     """Place nodes in a tidy top-down hierarchy."""
     from collections import defaultdict
@@ -499,7 +508,19 @@ def build_ttt_tree_nodes(board, side, max_depth=3, ordered=True):
     def util_of_winner(w):
         if w == "X": return 1000
         if w == "O": return -1000
-        return 0
+        return 0 
+    
+    # debugging minimax issue
+    legal_root = ttt_moves(board, ordered=ordered)
+    if max_depth <= 0 or not legal_root:
+        w = ttt_winner(board)
+        if w is not None:               
+            nodes["ROOT"].kind  = "LEAF"
+            nodes["ROOT"].value = util_of_winner(w)
+        else:                            
+            nodes["ROOT"].kind  = "LEAF"
+            nodes["ROOT"].value = _evaluate_board(board)
+        return nodes
 
     def rec(board, player, depth, last_move: Optional[int], by: Optional[str]):
         w = ttt_winner(board)
@@ -518,12 +539,13 @@ def build_ttt_tree_nodes(board, side, max_depth=3, ordered=True):
         nodes[nid] = Node(nid, kind, None, children, move=last_move, by=by)
         return nid
 
-    for m in ttt_moves(board, ordered=ordered):
+    for m in legal_root:
         board[m] = side
         child = rec(board, "O" if side == "X" else "X", max_depth - 1, m, side)
         board[m] = " "
         nodes["ROOT"].children.append(child)
     return nodes
+
 
 MAX_COLLAPSED_LEAVES = 24
 
@@ -551,7 +573,7 @@ def rebuild_ttt_tree(board, ordered_flag: bool):
     max_depth = min(req_depth, board.count(" "))
     if max_depth <= 0: max_depth = 1
 
-    if max_depth <= 4:
+    if max_depth <= 3:
         nodes = build_ttt_tree_nodes(board.copy(), side, max_depth=max_depth, ordered=ordered_flag)
         if st.session_state.ttt_tree_algo == "Alpha–Beta":
             steps = alphabeta_steps(nodes)
@@ -703,9 +725,9 @@ with tab_ttt:
                 st.success(f"Ordering set to: {CURRENT_ORDER}")
                 st.rerun()
         with c_top[2]:
-            # diagram depth is still adjustable
-            t_depth = st.slider("Diagram depth", 1, 9, st.session_state.ttt_tree_depth,
-                                help="For depth > 4, diagram collapses to Root→Leaves for readability.")
+            t_depth = st.slider("Diagram depth", 1, 3, min(st.session_state.ttt_tree_depth, 3),
+                                help="Depth limited to 3 for clarity.")
+
         with c_top[3]:
             starter = st.radio("Who starts?", ["Student (X)", "Computer (O)"], index=0, key="starter_radio")
         with c_top[4]:
@@ -795,13 +817,24 @@ with tab_ttt:
             depth_to_build = min(st.session_state.ttt_tree_depth, board.count(" ")) or 1
             side = "O" if board.count("X") > board.count("O") else "X"
 
-            if depth_to_build <= 4:
+            if depth_to_build <= 3:
                 steps = st.session_state.ttt_tree_steps
                 st.caption(f"Depth: {st.session_state.get('ttt_tree_auto_depth', depth_to_build)} (full tree)")
-                if steps:
+
+                if _is_trivial_tree(st.session_state.ttt_tree_nodes):
+                    side_now = "O" if board.count("X") > board.count("O") else "X"
+                    if algo_for_diagram == "Alpha–Beta":
+                        v, m, _ = search_alphabeta(board.copy(), side_now, ordered=True)
+                        st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
+                    else:
+                        v, m, _ = search_minimax(board.copy(), side_now, ordered=True)
+                        st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
+                elif steps:
                     s_left, s_mid, s_right = st.columns([1,1,2])
-                    if s_left.button("⟵", key="ttt_tree_prev"): st.session_state.ttt_tree_i = max(0, st.session_state.ttt_tree_i - 1)
-                    if s_mid.button("⟶", key="ttt_tree_next"): st.session_state.ttt_tree_i = min(len(steps) - 1, st.session_state.ttt_tree_i + 1)
+                    if s_left.button("⟵", key="ttt_tree_prev"):
+                        st.session_state.ttt_tree_i = max(0, st.session_state.ttt_tree_i - 1)
+                    if s_mid.button("⟶", key="ttt_tree_next"):
+                        st.session_state.ttt_tree_i = min(len(steps) - 1, st.session_state.ttt_tree_i + 1)
                     s_right.write(f"Step {st.session_state.ttt_tree_i + 1} / {len(steps)}")
 
                     step = steps[st.session_state.ttt_tree_i]
@@ -813,28 +846,9 @@ with tab_ttt:
                         compact=True
                     )
 
-                    # quick summary line matching the algorithm
-                    if algo_for_diagram == "Alpha–Beta":
-                        v, m, _ = search_alphabeta(board.copy(), side, ordered=True)
-                        st.caption(f"α–β best (full search): value **{v}**, move **{(m+1) if m is not None else '—'}**.")
-                    else:
-                        v, m, _ = search_minimax(board.copy(), side, ordered=True)
-                        st.caption(f"Minimax best (full search): value **{v}**, move **{(m+1) if m is not None else '—'}**.")
-
-                    with st.expander("Grid ↔ node mapping"):
-                        root = st.session_state.ttt_tree_nodes.get("ROOT")
-                        if root and root.children:
-                            lines = []
-                            for cid in root.children:
-                                n = st.session_state.ttt_tree_nodes[cid]
-                                if n.move is not None and n.by is not None:
-                                    lines.append(f"- **{cid}** came from **m={n.move+1} by {n.by}**")
-                                else:
-                                    lines.append(f"- **{cid}**")
-                            st.markdown("\n".join(lines))
-                        st.caption("Cells use 1..9 numbering: 1 2 3 / 4 5 6 / 7 8 9.")
                 else:
                     st.info("Start a new game or apply a move ordering to build the tree.")
+
             else:
                 # Collapsed snapshot (Root→Leaves) for depth > 4
                 nodes_full = build_ttt_tree_nodes(board.copy(), side, max_depth=depth_to_build, ordered=ordered_flag)

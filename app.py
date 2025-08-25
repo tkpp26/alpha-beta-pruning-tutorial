@@ -604,7 +604,7 @@ st.markdown(
 )
 
 st.markdown("<h1 style='text-align: center; margin-bottom:0;'>Minimax & Alpha–Beta</h1>", unsafe_allow_html=True)
-st.caption("Step through a toy tree; then play Tic-Tac-Toe against search agents and visualize the search & pruning.")
+st.caption("Step through a sample tree; then play Tic-Tac-Toe against search agents and visualize the search & pruning.")
 
 # Session state (toy)
 if "nodes" not in st.session_state:         st.session_state.nodes = default_tree()
@@ -742,13 +742,22 @@ with tab_ttt:
                 _sync_algo_and_rebuild(st.session_state.ttt_board)
         with c_top[5]:
             if st.button("New game", key="btn_new_game", use_container_width=True):
+                # reset board + metrics
                 st.session_state.ttt_board = [" "] * 9
                 st.session_state.ttt_starter = starter
                 st.session_state.last_metrics = None
+
+                # reset viewer state so the old tree does not linger
+                st.session_state.ttt_tree_nodes = {}
+                st.session_state.ttt_tree_steps = []
+                st.session_state.ttt_tree_i = 0
+
+                # keep ordering & depth, then rebuild and rerun
                 _apply_ordering_mode(st.session_state.ordering_mode)
                 st.session_state.ttt_tree_depth = t_depth
                 _sync_algo_and_rebuild(st.session_state.ttt_board)
                 st.rerun()
+
 
         # sync depth adjustment
         if t_depth != st.session_state.ttt_tree_depth:
@@ -809,71 +818,51 @@ with tab_ttt:
 
     with col_tree:
         st.markdown("#### Search diagram")
+
+        # Build once on first load (or after you cleared on "New game")
+        if not st.session_state.ttt_tree_nodes and st.session_state.ttt_tree_algo is not None:
+            _sync_algo_and_rebuild(st.session_state.ttt_board)
+
         algo_for_diagram = st.session_state.ttt_tree_algo  # None if Random
         if algo_for_diagram is None:
             st.info("Random strategy: no search tree to show.")
         else:
-            ordered_flag = True
-            depth_to_build = min(st.session_state.ttt_tree_depth, board.count(" ")) or 1
-            side = "O" if board.count("X") > board.count("O") else "X"
+            depth_to_build = min(st.session_state.ttt_tree_depth, st.session_state.ttt_board.count(" ")) or 1
+            st.caption(f"Depth: {st.session_state.get('ttt_tree_auto_depth', depth_to_build)} (full tree)")
 
-            if depth_to_build <= 3:
-                steps = st.session_state.ttt_tree_steps
-                st.caption(f"Depth: {st.session_state.get('ttt_tree_auto_depth', depth_to_build)} (full tree)")
+            nodes = st.session_state.ttt_tree_nodes
+            steps = st.session_state.ttt_tree_steps
+            root = nodes.get("ROOT") if nodes else None
 
-                if _is_trivial_tree(st.session_state.ttt_tree_nodes):
-                    side_now = "O" if board.count("X") > board.count("O") else "X"
-                    if algo_for_diagram == "Alpha–Beta":
-                        v, m, _ = search_alphabeta(board.copy(), side_now, ordered=True)
-                        st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
-                    else:
-                        v, m, _ = search_minimax(board.copy(), side_now, ordered=True)
-                        st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
-                elif steps:
-                    s_left, s_mid, s_right = st.columns([1,1,2])
-                    if s_left.button("⟵", key="ttt_tree_prev"):
-                        st.session_state.ttt_tree_i = max(0, st.session_state.ttt_tree_i - 1)
-                    if s_mid.button("⟶", key="ttt_tree_next"):
-                        st.session_state.ttt_tree_i = min(len(steps) - 1, st.session_state.ttt_tree_i + 1)
-                    s_right.write(f"Step {st.session_state.ttt_tree_i + 1} / {len(steps)}")
-
-                    step = steps[st.session_state.ttt_tree_i]
-                    draw_tree(
-                        st.session_state.ttt_tree_nodes,
-                        step,
-                        show_alpha_beta=(algo_for_diagram == "Alpha–Beta"),
-                        title=f"{algo_for_diagram} — Step {st.session_state.ttt_tree_i+1}",
-                        compact=True
-                    )
-
+            if not nodes:
+                st.info("Preparing diagram… make a move or press **New game**.")
+            elif root and root.kind == "LEAF":
+                # This really is a terminal/limit position
+                side_now = "O" if st.session_state.ttt_board.count("X") > st.session_state.ttt_board.count("O") else "X"
+                if algo_for_diagram == "Alpha–Beta":
+                    v, _m, _ = search_alphabeta(st.session_state.ttt_board.copy(), side_now, ordered=True)
+                    st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
                 else:
-                    st.info("Start a new game or apply a move ordering to build the tree.")
+                    v, _m, _ = search_minimax(st.session_state.ttt_board.copy(), side_now, ordered=True)
+                    st.info(f"Terminal/limit position — best value **{v}**; nothing to expand.")
+            elif steps:
+                s_left, s_mid, s_right = st.columns([1,1,2])
+                if s_left.button("⟵", key="ttt_tree_prev"):
+                    st.session_state.ttt_tree_i = max(0, st.session_state.ttt_tree_i - 1)
+                if s_mid.button("⟶", key="ttt_tree_next"):
+                    st.session_state.ttt_tree_i = min(len(steps) - 1, st.session_state.ttt_tree_i + 1)
+                s_right.write(f"Step {st.session_state.ttt_tree_i + 1} / {len(steps)}")
 
-            else:
-                # Collapsed snapshot (Root→Leaves) for depth > 4
-                nodes_full = build_ttt_tree_nodes(board.copy(), side, max_depth=depth_to_build, ordered=ordered_flag)
-                full_steps = alphabeta_steps(nodes_full) if algo_for_diagram == "Alpha–Beta" else minimax_steps(nodes_full)
-                root_value = full_steps[-1].discovered_values.get("ROOT", None) if full_steps else None
-
-                collapsed_nodes, total_leaves, shown_leaves = build_collapsed_root_to_leaves(nodes_full)
-                collapsed_step = Step(
-                    description=f"Collapsed view: Root→Leaves at depth {depth_to_build}.",
-                    current="ROOT",
-                    discovered_values=({"ROOT": root_value} if root_value is not None else {}),
-                    frontier_eval={nid: collapsed_nodes[nid].value for nid, n in collapsed_nodes.items() if n.kind == "LEAF"},
-                    alpha_beta={}, pruned_edges=[]
-                )
+                step = steps[st.session_state.ttt_tree_i]
                 draw_tree(
-                    collapsed_nodes,
-                    collapsed_step,
-                    show_alpha_beta=False,
-                    title=f"{algo_for_diagram} — Collapsed Root→Leaves (depth {depth_to_build})",
+                    nodes,
+                    step,
+                    show_alpha_beta=(algo_for_diagram == "Alpha–Beta"),
+                    title=f"{algo_for_diagram} — Step {st.session_state.ttt_tree_i+1}",
                     compact=True
                 )
-                if shown_leaves < total_leaves:
-                    st.caption(f"Showing {shown_leaves:,} of {total_leaves:,} leaves (sampled). Root value = {root_value}.")
-                else:
-                    st.caption(f"Leaves shown: {total_leaves:,}. Root value = {root_value}.")
+            else:
+                st.info("Start a new game or apply a move ordering to build the tree.")
 
     # Legend lives in the Tic-Tac-Toe section (as requested)
     with st.expander("Legend & scoring"):

@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 import math, time, random
-from contextlib import contextmanager
 
 # =========================
 # Data structures & logging
@@ -307,8 +306,9 @@ WIN_LINES = [
     (0,4,8),(2,4,6)
 ]
 
-# Only Random (default) + Custom for ordering exploration
-CURRENT_ORDER = random.sample(range(9), 9)
+
+def get_order():
+    return st.session_state.current_order
 
 def _parse_order(text: str):
     try:
@@ -320,13 +320,12 @@ def _parse_order(text: str):
         return None
 
 def _apply_ordering_mode(mode: str):
-    global CURRENT_ORDER
     if mode == "Random (new each game)":
-        CURRENT_ORDER = random.sample(range(9), 9)
+        st.session_state.current_order = random.sample(range(9), 9)
     elif mode == "Custom (student)":
         vals = _parse_order(st.session_state.custom_order_text)
         if vals is not None:
-            CURRENT_ORDER = vals
+            st.session_state.current_order = vals
 
 def ttt_winner(board):
     for a,b,c in WIN_LINES:
@@ -337,10 +336,11 @@ def ttt_winner(board):
     return None
 
 def ttt_moves(board, ordered: bool = False):
-    ms = [i for i,c in enumerate(board) if c == " "]
+    ms = [i for i, c in enumerate(board) if c == " "]
     if not ordered:
         return ms
-    idx = {v:i for i,v in enumerate(CURRENT_ORDER)}
+    order = st.session_state.current_order       
+    idx = {v: i for i, v in enumerate(order)}
     return sorted(ms, key=lambda m: idx.get(m, 9999))
 
 def ttt_minimax(board, player, alpha=-math.inf, beta=math.inf):
@@ -348,7 +348,7 @@ def ttt_minimax(board, player, alpha=-math.inf, beta=math.inf):
     if w == "X": return 1, None
     if w == "O": return -1, None
     if w == "draw": return 0, None
-    if player == "X":  # maximizing
+    if player == "X":  
         best, best_move = -math.inf, None
         for m in ttt_moves(board):
             board[m] = "X"
@@ -455,15 +455,6 @@ def search_alphabeta(board, player, ordered=False):
     dt = time.perf_counter() - t0
     return val, move, {"algorithm":"Alpha–Beta","visited":visited,"prunes":prunes,"time_s":dt}
 
-@contextmanager
-def temp_order(order):
-    global CURRENT_ORDER
-    old = CURRENT_ORDER[:]
-    CURRENT_ORDER = order[:]
-    try:
-        yield
-    finally:
-        CURRENT_ORDER = old
 
 def choose_ai_move(board, ai_symbol, strategy, ordered=True):
     legal = ttt_moves(board, ordered=False)
@@ -619,7 +610,8 @@ if "ai_strategy" not in st.session_state:   st.session_state.ai_strategy = "Opti
 if "ordering_mode" not in st.session_state: st.session_state.ordering_mode = "Random (new each game)"
 if "custom_order_text" not in st.session_state: st.session_state.custom_order_text = "4,0,2,6,8,1,3,5,7"
 if "last_metrics" not in st.session_state:  st.session_state.last_metrics = None
-
+if "current_order" not in st.session_state:
+    st.session_state.current_order = random.sample(range(9), 9)
 # Tree viewer state
 if "ttt_tree_depth" not in st.session_state: st.session_state.ttt_tree_depth = 3
 if "ttt_tree_algo" not in st.session_state:  st.session_state.ttt_tree_algo = "Alpha–Beta"  # will be synced to strategy below
@@ -711,7 +703,7 @@ with tab_ttt:
                 index=ordering_options.index(st.session_state.ordering_mode)
                 if st.session_state.ordering_mode in ordering_options else 0
             )
-            st.caption(f"Current order: {CURRENT_ORDER}  (indices 0..8 → cells 1..9)")
+            st.caption(f"Current order: {st.session_state.current_order}  (indices 0..8 → cells 1..9)")
         with c_top[1]:
             if st.session_state.ordering_mode == "Custom (student)":
                 st.session_state.custom_order_text = st.text_input(
@@ -722,7 +714,7 @@ with tab_ttt:
             if st.button("Apply ordering", use_container_width=True):
                 _apply_ordering_mode(st.session_state.ordering_mode)
                 _sync_algo_and_rebuild(st.session_state.ttt_board)
-                st.success(f"Ordering set to: {CURRENT_ORDER}")
+                st.success(f"Ordering set to: {st.session_state.current_order}")
                 st.rerun()
         with c_top[2]:
             t_depth = st.slider("Diagram depth", 1, 3, min(st.session_state.ttt_tree_depth, 3),
@@ -881,17 +873,29 @@ with tab_ttt:
     st.divider()
     st.markdown("### Benchmark: Minimax vs Alpha–Beta from this position")
     bench_left, bench_right = st.columns([1, 1])
+
     with bench_left:
         if st.button("Run benchmark", key="btn_bench", use_container_width=True):
             side_b = "O" if board.count("X") > board.count("O") else "X"
-            v1, m1, mm = search_minimax(board.copy(), side_b, ordered=True)
-            v2, m2, ab = search_alphabeta(board.copy(), side_b, ordered=True)
-            st.session_state.bench = {"side": side_b, "mm": (v1, m1, mm), "ab": (v2, m2, ab)}
+
+            order_snapshot = st.session_state.current_order[:]
+            v1, m1, mm  = search_minimax(board.copy(),   side_b, ordered=True)
+            v2, m2, abm = search_alphabeta(board.copy(), side_b, ordered=True)
+
+            st.session_state.bench = {
+                "side": side_b,
+                "mm": (v1, m1, mm),
+                "ab": (v2, m2, abm),
+                "order": order_snapshot
+            }
+
+
     with bench_right:
         if hasattr(st.session_state, "bench"):
             side_b = st.session_state.bench["side"]
             (v1, m1, mm), (v2, m2, abm) = st.session_state.bench["mm"], st.session_state.bench["ab"]
             st.write(f"Side to move: **{side_b}**")
+            st.caption(f"Move ordering used: {st.session_state.bench['order']}")
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Minimax (no pruning)**")
@@ -903,8 +907,8 @@ with tab_ttt:
                 st.write(f"Move: {m2+1 if m2 is not None else '—'} | Value: {v2}")
                 st.write(f"Visited: {abm['visited']:,} | Prunes: {abm['prunes']:,}")
                 st.write(f"Time: {abm['time_s']*1000:.2f} ms")
-
-# Optional download (if present)
+            if abm["prunes"] == 0:
+                st.caption("ℹ️ No α–β pruning triggered under this move ordering/position; try center-first ordering to see a difference.")
 try:
     with open("Alpha-Beta Pruning - v2.pptx", "rb") as f:
         st.download_button("Download Alpha-Beta Pruning Guidance", f, file_name="Alpha-Beta Pruning - v2.pptx")
